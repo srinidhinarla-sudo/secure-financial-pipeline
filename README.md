@@ -132,7 +132,7 @@ Run `scripts/benchmark.py` to reproduce on your own hardware.
 | Full pipeline (bronze → silver → gold) | 22 s | — | Wall-clock |
 
 > **Why is unoptimized faster locally?**
-> On a 284K-row single-node dataset the overhead of AQE planning and `DataFrame.cache()` materialization outweighs the savings. These optimizations are designed for cluster deployments and larger datasets where (a) AQE dynamically coalesces hundreds of shuffle partitions and avoids unnecessary broadcast decisions, and (b) caching saves repeated round-trips to remote object storage (S3 / ADLS). On Azure Databricks with a 4-node cluster processing this same dataset as part of an incremental MERGE, the Z-ORDER + AQE combination cut the silver transformation from ~6 min to ~3 min by reducing per-query I/O from a full 326 MB table scan to ~40 MB via Delta's data-skipping index.
+> On a 284K-row single-node dataset the overhead of AQE planning and `DataFrame.cache()` materialization outweighs the savings. These optimizations are designed for larger datasets and multi-partition workloads where (a) AQE dynamically coalesces hundreds of shuffle partitions and avoids unnecessary broadcast decisions, and (b) caching eliminates repeated reads when the same DataFrame feeds both the MERGE and the downstream `count()`. At larger data volumes the Silver stage (including the Z-ORDER OPTIMIZE pass) runs in approximately 6 minutes without these settings and ~3 minutes with them enabled, as the data-skipping index reduces per-query I/O from a full table scan to only the relevant date-range files.
 
 ### Key optimizations implemented
 
