@@ -30,7 +30,7 @@ SPARK_EXECUTOR_MEMORY = os.getenv("SPARK_EXECUTOR_MEMORY", "4g")
 
 # ── Pipeline constants ────────────────────────────────────────────────────────
 BRONZE_PARTITION_COL = "ingest_date"
-SILVER_PARTITION_COL = "transaction_date"
+SILVER_PARTITION_COL = "ingest_date"  # partition by load batch; Z-ORDER handles transaction_date layout
 
 # Broadcast join size threshold (bytes).  Tables smaller than this are broadcast.
 BROADCAST_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10 MB
