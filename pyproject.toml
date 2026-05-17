@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secure-financial-pipeline"
+version = "0.1.0"
+description = "Apache Airflow ETL pipeline processing credit card transactions through a Delta Lake medallion architecture"
+requires-python = ">=3.11"
+dependencies = [
+    "apache-airflow==2.8.4",
+    "apache-airflow-providers-celery==3.6.2",
+    "pyspark==3.5.1",
+    "delta-spark==3.1.0",
+    "pandas==2.2.2",
+    "pyarrow==15.0.2",
+    "requests==2.31.0",
+    "python-dotenv==1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.1.1",
+    "pytest-mock==3.14.0",
+    "ruff==0.4.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "dags", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "S", "B", "A", "C4", "PT"]
+ignore = [
+    "S101",   # assert statements are fine in tests
+    "S603",   # subprocess calls — acceptable in orchestration glue
+    "N803",   # argument names — PySpark column names often uppercase
+    "N806",   # variable uppercase — PySpark convention
+    "N812",   # lowercase imported as non-lowercase — PySpark `functions as F` convention
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "PT"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+log_cli = true
+log_cli_level = "INFO"

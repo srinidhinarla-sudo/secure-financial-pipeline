@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, master]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python setup ────────────────────────────────────────────────────────
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # ── Java (required by PySpark) ──────────────────────────────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      # ── Install dependencies ────────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # ── Ruff linting ────────────────────────────────────────────────────────
+      - name: Ruff — check formatting and lint rules
+        run: |
+          ruff check src/ dags/ tests/
+          ruff format --check src/ dags/ tests/
+
+      # ── Secret pattern check (no hardcoded creds) ───────────────────────────
+      - name: Check for hardcoded secrets
+        run: |
+          # Fail if any file outside .env.example contains a suspicious pattern
+          ! grep -rn \
+            --include="*.py" --include="*.yaml" --include="*.yml" \
+            -E "(password|secret|token|api_key)\s*=\s*['\"][^'\"]{8,}" \
+            src/ dags/ tests/ \
+            | grep -v "# noqa"
+
+      # ── Pytest ──────────────────────────────────────────────────────────────
+      - name: Run pytest
+        env:
+          AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow_test.db
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+          PIPELINE_DATA_DIR: /tmp/pipeline_data
+          PIPELINE_DELTA_DIR: /tmp/pipeline_data/delta
+          SLACK_WEBHOOK_URL: ""
+          # PySpark workers must use the same Python version as the driver
+          PYSPARK_PYTHON: python3.11
+          PYSPARK_DRIVER_PYTHON: python3.11
+        run: |
+          mkdir -p /tmp/pipeline_data/delta
+          pytest tests/ -v --tb=short
+
+      # ── DAG import validation ───────────────────────────────────────────────
+      - name: Validate DAGs load without errors
+        env:
+          AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////tmp/airflow_dagbag.db
+          AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+          PIPELINE_DATA_DIR: /tmp/pipeline_data
+          PIPELINE_DELTA_DIR: /tmp/pipeline_data/delta
+          SLACK_WEBHOOK_URL: ""
+        run: |
+          python -c "
+          import sys
+          from airflow.models import DagBag
+
+          bag = DagBag(dag_folder='dags/', include_examples=False)
+
+          if bag.import_errors:
+              print('DAG import errors:')
+              for dag_file, error in bag.import_errors.items():
+                  print(f'  {dag_file}: {error}')
+              sys.exit(1)
+
+          expected_dags = {'bronze_ingest', 'silver_clean', 'gold_aggregate'}
+          found_dags = set(bag.dags.keys())
+          missing = expected_dags - found_dags
+
+          if missing:
+              print(f'Missing DAGs: {missing}')
+              sys.exit(1)
+
+          print(f'All {len(found_dags)} DAGs loaded successfully: {sorted(found_dags)}')
+          "
