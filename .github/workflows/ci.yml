@@ -42,8 +42,8 @@ jobs:
       # ── Ruff linting ────────────────────────────────────────────────────────
       - name: Ruff — check formatting and lint rules
         run: |
-          ruff check src/ dags/ tests/
-          ruff format --check src/ dags/ tests/
+          ruff check src/ dags/ tests/ scripts/
+          ruff format --check src/ dags/ tests/ scripts/
 
       # ── Secret pattern check (no hardcoded creds) ───────────────────────────
       - name: Check for hardcoded secrets

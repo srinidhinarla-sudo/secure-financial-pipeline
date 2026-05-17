@@ -28,7 +28,7 @@ time_fraud = RNG.uniform(0, 172_792, N_FRAUD)
 # Fraud rows have slightly higher variance on several components — matches
 # the real dataset's statistical signature without needing the real data.
 v_legit = RNG.standard_normal((N_LEGIT, 28))
-v_fraud  = RNG.standard_normal((N_FRAUD, 28)) * 1.8 - 0.5   # shifted mean, higher var
+v_fraud = RNG.standard_normal((N_FRAUD, 28)) * 1.8 - 0.5  # shifted mean, higher var
 
 # ── Amount ────────────────────────────────────────────────────────────────────
 amount_legit = np.clip(RNG.lognormal(mean=3.5, sigma=1.8, size=N_LEGIT), 0, 25_000)

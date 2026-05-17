@@ -1,17 +1,21 @@
 """Run the full Bronze → Silver → Gold pipeline locally (no Airflow/Docker needed)."""
 
+from __future__ import annotations
+
 import os
 import time
 
+# Set env defaults before importing src modules (which read config at import time).
 os.environ.setdefault("PIPELINE_DATA_DIR", os.path.abspath("data"))
 os.environ.setdefault("PIPELINE_DELTA_DIR", os.path.abspath("data/delta"))
 os.environ.setdefault("SLACK_WEBHOOK_URL", "")
 
-from src.transformations.bronze import run_bronze
-from src.transformations.gold import run_gold
-from src.transformations.silver import run_silver
-from src.utils.logging_config import get_logger
-from src.utils.spark_session import get_spark
+from src.config import GOLD_DAILY_PATH  # noqa: E402
+from src.transformations.bronze import run_bronze  # noqa: E402
+from src.transformations.gold import run_gold  # noqa: E402
+from src.transformations.silver import run_silver  # noqa: E402
+from src.utils.logging_config import get_logger  # noqa: E402
+from src.utils.spark_session import get_spark  # noqa: E402
 
 logger = get_logger("pipeline_runner", stage="runner")
 
@@ -21,7 +25,7 @@ def hms(seconds: float) -> str:
     return f"{m}m {s}s"
 
 
-def main():
+def main() -> None:
     print("\n" + "=" * 60)
     print("  Secure Financial Data Pipeline — Local Run")
     print("=" * 60)
@@ -48,7 +52,8 @@ def main():
     t0 = time.time()
     gold_counts = run_gold(spark)
     gold_time = time.time() - t0
-    print(f"      ✓ daily={gold_counts['daily']} rows, hourly={gold_counts['hourly']} rows  ({hms(gold_time)})")
+    daily, hourly = gold_counts["daily"], gold_counts["hourly"]
+    print(f"      ✓ daily={daily} rows, hourly={hourly} rows  ({hms(gold_time)})")
 
     total_time = time.time() - wall_start
     print("\n" + "=" * 60)
@@ -56,13 +61,20 @@ def main():
     print("=" * 60)
 
     # ── Spot-check Gold output ────────────────────────────────────────────────
-    from src.config import GOLD_DAILY_PATH
-
     print("\n  Gold daily_summary (top 10 rows by fraud_count desc):")
-    spark.read.format("delta").load(GOLD_DAILY_PATH) \
-        .orderBy("fraud_count", ascending=False) \
-        .select("transaction_date", "total_transactions", "fraud_count", "fraud_rate", "total_volume") \
+    (
+        spark.read.format("delta")
+        .load(GOLD_DAILY_PATH)
+        .orderBy("fraud_count", ascending=False)
+        .select(
+            "transaction_date",
+            "total_transactions",
+            "fraud_count",
+            "fraud_rate",
+            "total_volume",
+        )
         .show(10, truncate=False)
+    )
 
     spark.stop()
 
