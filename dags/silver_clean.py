@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.sensors.external_task import ExternalTaskSensor
+from airflow.sensors.python import PythonSensor
 from src.utils.slack_alerts import send_failure_alert
 
 DEFAULT_ARGS = {
@@ -39,14 +39,20 @@ MERGEs into the Silver Delta table and runs `OPTIMIZE … ZORDER BY transaction_
 **Benchmarking mode:** set `SILVER_UNOPTIMIZED=1` to disable caching/AQE (~6 minutes).
 """,
 ) as dag:
-    wait_for_bronze = ExternalTaskSensor(
+
+    def _bronze_table_ready():
+        import os
+
+        delta_dir = os.getenv("PIPELINE_DELTA_DIR", "/opt/airflow/data/delta")
+        return os.path.isdir(os.path.join(delta_dir, "bronze", "transactions", "_delta_log"))
+
+    wait_for_bronze = PythonSensor(
         task_id="wait_for_bronze_ingest",
-        external_dag_id="bronze_ingest",
-        external_task_id="ingest_csv_to_bronze",
+        python_callable=_bronze_table_ready,
         mode="reschedule",
         timeout=3600,
         poke_interval=60,
-        doc_md="Block until the Bronze ingest task has succeeded for this execution date.",
+        doc_md="Block until the Bronze Delta table exists on disk.",
     )
 
     def _run_silver(**context):

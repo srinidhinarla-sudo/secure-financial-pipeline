@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.sensors.external_task import ExternalTaskSensor
+from airflow.sensors.python import PythonSensor
 from src.utils.slack_alerts import send_failure_alert
 
 DEFAULT_ARGS = {
@@ -40,14 +40,20 @@ Reads from Silver and produces two Gold tables:
 Both tables use Delta MERGE so re-runs are idempotent.
 """,
 ) as dag:
-    wait_for_silver = ExternalTaskSensor(
+
+    def _silver_table_ready():
+        import os
+
+        delta_dir = os.getenv("PIPELINE_DELTA_DIR", "/opt/airflow/data/delta")
+        return os.path.isdir(os.path.join(delta_dir, "silver", "transactions", "_delta_log"))
+
+    wait_for_silver = PythonSensor(
         task_id="wait_for_silver_clean",
-        external_dag_id="silver_clean",
-        external_task_id="clean_bronze_to_silver",
+        python_callable=_silver_table_ready,
         mode="reschedule",
         timeout=3600,
         poke_interval=60,
-        doc_md="Block until the Silver clean task has succeeded for this execution date.",
+        doc_md="Block until the Silver Delta table exists on disk.",
     )
 
     def _run_gold(**context):
