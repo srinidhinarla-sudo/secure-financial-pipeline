@@ -46,9 +46,7 @@ def get_spark(app_name: str = SPARK_APP_NAME, optimized: bool = True) -> SparkSe
         # Raise the limit so transaction_date stats are collected, enabling Z-ORDER.
         .config("spark.databricks.delta.properties.defaults.dataSkippingNumIndexedCols", "40")
         # Allow Z-ORDER even when stats are sparse (graceful degradation).
-        .config(
-            "spark.databricks.delta.optimize.zorder.checkStatsCollection.enabled", "false"
-        )
+        .config("spark.databricks.delta.optimize.zorder.checkStatsCollection.enabled", "false")
     )
 
     # configure_spark_with_delta_pip injects the pip-installed delta JARs
