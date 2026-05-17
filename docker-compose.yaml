@@ -14,7 +14,7 @@ x-airflow-common: &airflow-common
     PIPELINE_DATA_DIR: /opt/airflow/data
     PIPELINE_DELTA_DIR: /opt/airflow/data/delta
     SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
-    JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+    JAVA_HOME: /usr/lib/jvm/java-17-openjdk
   volumes:
     - ./dags:/opt/airflow/dags
     - ./src:/opt/airflow/src

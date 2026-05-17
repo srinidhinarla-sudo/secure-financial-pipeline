@@ -6,10 +6,11 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openjdk-17-jre-headless \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture) /usr/lib/jvm/java-17-openjdk 2>/dev/null || true
 
-# JAVA_HOME required by PySpark
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+# JAVA_HOME required by PySpark — arch-agnostic symlink works on amd64 and arm64
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # Switch back to the airflow user for pip installs
