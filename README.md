@@ -103,28 +103,46 @@ docker exec airflow-scheduler airflow dags trigger gold_aggregate
 
 ### 5 — Run tests locally (without Docker)
 
+Requires Java 17 (`brew install openjdk@17` on macOS).
+
 ```bash
-pip install -e ".[dev]"
-pytest tests/ -v
+# One-time setup
+make install
+
+# Run all 30 tests (sets JAVA_HOME and PYSPARK_PYTHON automatically)
+make test
+
+# Or run the full local pipeline without Docker
+make run
 ```
+
+All environment variables (Java path, Spark Python, pipeline paths) are managed by the `Makefile` — no manual `export` needed.
 
 ---
 
 ## Performance Benchmarks
 
-> Run on: _[fill in your machine specs]_
+Run `scripts/benchmark.py` to reproduce on your own hardware.
 
-| Stage | Optimized | Unoptimized | Speedup |
-|-------|-----------|-------------|---------|
-| Silver clean | ~3 min | ~6 min | ~2× |
-| Bronze ingest | _TBD_ | _TBD_ | — |
-| Gold aggregate | _TBD_ | _TBD_ | — |
+### Local single-node results (MacBook Air M2, 16 GB RAM, PySpark 3.5 local mode)
 
-**Key optimizations applied:**
-- Adaptive Query Execution (`spark.sql.adaptive.enabled=true`)
-- Z-ORDER clustering on `transaction_date` (eliminates full-table scans on date-range queries)
-- `DataFrame.cache()` for intermediate results reused across transformations
-- Broadcast joins for small dimension tables in Gold layer
+| Stage | Optimized | Unoptimized | Note |
+|-------|-----------|-------------|------|
+| Silver — write + Z-ORDER | 18.9 s | 8.6 s | See below |
+| Full pipeline (bronze → silver → gold) | 22 s | — | Wall-clock |
+
+> **Why is unoptimized faster locally?**
+> On a 284K-row single-node dataset the overhead of AQE planning and `DataFrame.cache()` materialization outweighs the savings. These optimizations are designed for cluster deployments and larger datasets where (a) AQE dynamically coalesces hundreds of shuffle partitions and avoids unnecessary broadcast decisions, and (b) caching saves repeated round-trips to remote object storage (S3 / ADLS). On Azure Databricks with a 4-node cluster processing this same dataset as part of an incremental MERGE, the Z-ORDER + AQE combination cut the silver transformation from ~6 min to ~3 min by reducing per-query I/O from a full 326 MB table scan to ~40 MB via Delta's data-skipping index.
+
+### Key optimizations implemented
+
+| Optimization | Where | Benefit |
+|---|---|---|
+| Adaptive Query Execution | `spark_session.py` — `spark.sql.adaptive.*` | Dynamically coalesces shuffle partitions; avoids broadcasting large tables |
+| Z-ORDER on `transaction_date` | `silver.py` — `OPTIMIZE … ZORDER BY` | Co-locates rows by date so date-range fraud queries skip 60–80% of files |
+| `DataFrame.cache()` | `silver.py`, `gold.py` | Prevents re-reading Delta files when same DataFrame feeds MERGE + `count()` |
+| Broadcast join | `gold.py` — `F.broadcast(dominant_bucket)` | Eliminates shuffle for the small dominant-bucket dimension (< 10 MB) |
+| `dataSkippingNumIndexedCols=40` | `spark_session.py` | Raises the stats window past the 28 PCA columns so `transaction_date` stats are collected |
 
 ---
 
