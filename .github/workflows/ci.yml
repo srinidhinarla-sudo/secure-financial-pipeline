@@ -93,7 +93,7 @@ jobs:
                   print(f'  {dag_file}: {error}')
               sys.exit(1)
 
-          expected_dags = {'bronze_ingest', 'silver_clean', 'gold_aggregate'}
+          expected_dags = {'bronze_ingest', 'silver_clean', 'gold_aggregate', 'integrity_check'}
           found_dags = set(bag.dags.keys())
           missing = expected_dags - found_dags
 

@@ -14,6 +14,7 @@ from pyspark.sql.types import (
 )
 
 from src.config import BRONZE_PARTITION_COL, BRONZE_PATH, RAW_CSV_PATH
+from src.security.audit import add_row_hash, compute_merkle_root, write_manifest
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__, stage="bronze")
@@ -101,8 +102,18 @@ def run_bronze(
 ) -> int:
     """End-to-end Bronze stage. Returns the number of rows written."""
     df_raw = read_raw_csv(spark, csv_path)
-    df_enriched = add_bronze_metadata(df_raw, ingest_date)
+    df_meta = add_bronze_metadata(df_raw, ingest_date)
+    # Stamp every row with a SHA-256 content hash before writing.
+    # This hash covers all financial columns so any post-ingest modification
+    # to the stored Parquet files is detectable by the integrity_check DAG.
+    df_enriched = add_row_hash(df_meta)
     write_bronze(df_enriched, delta_path)
     count = df_enriched.count()
-    logger.info("Bronze stage complete — %d rows", count)
+
+    # Build Merkle tree over this batch's row hashes and record the root.
+    hashes = [r.row_hash for r in df_enriched.select("row_hash").collect()]
+    root = compute_merkle_root(hashes)
+    write_manifest(spark, layer="bronze", row_count=count, merkle_root=root)
+
+    logger.info("Bronze stage complete — %d rows, merkle_root=%s…", count, root[:16])
     return count

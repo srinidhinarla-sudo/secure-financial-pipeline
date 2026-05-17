@@ -19,6 +19,7 @@ BRONZE_PATH = str(DELTA_DIR / "bronze" / "transactions")
 SILVER_PATH = str(DELTA_DIR / "silver" / "transactions")
 GOLD_DAILY_PATH = str(DELTA_DIR / "gold" / "daily_summary")
 GOLD_HOURLY_PATH = str(DELTA_DIR / "gold" / "hourly_summary")
+AUDIT_PATH = str(DELTA_DIR / "_audit" / "manifests")
 
 # ── Slack ──────────────────────────────────────────────────────────────────────
 SLACK_WEBHOOK_URL: str | None = os.getenv("SLACK_WEBHOOK_URL")
