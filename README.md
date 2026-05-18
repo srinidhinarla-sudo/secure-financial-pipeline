@@ -1,6 +1,6 @@
 # Secure Financial Data Pipeline
 
-An Apache Airflow-orchestrated ETL pipeline that ingests 284K+ credit card transactions through a Bronze/Silver/Gold medallion architecture on Delta Lake, with built-in fraud analytics, PySpark performance optimizations, and automated failure recovery.
+An Apache Airflow-orchestrated ETL pipeline that ingests 284K+ credit card transactions through a Bronze/Silver/Gold medallion architecture on Delta Lake. Built with an adversarial security mindset: a tamper-evident audit trail detects file-level attacks that bypass Delta Lake's own transaction log, and an unsupervised Isolation Forest flags anomalous transactions without ever seeing ground-truth fraud labels during training.
 
 ## Architecture
 
@@ -9,28 +9,36 @@ flowchart LR
     CSV["creditcard.csv\n284,807 rows"]:::source
 
     subgraph Bronze["Bronze Layer — Raw Ingest"]
-        B1["Schema enforcement\nMinimal validation\nPartitioned by ingest_date"]
+        B1["Schema enforcement\nRow-level SHA-256 hash\nMerkle root manifest\nPartitioned by ingest_date"]
     end
 
     subgraph Silver["Clean & Enrich"]
         S1["Deduplication\nType casting\nDerived columns\nZ-ORDER on tx_date"]
     end
 
-    subgraph Gold["Aggregations"]
+    subgraph Gold["Aggregations + Fraud Signals"]
         G1["Daily fraud counts\nHourly avg amounts\nBroadcast joins"]
+        G2["Isolation Forest\nV1-V28 + Amount\nfraud_signals table"]
+    end
+
+    subgraph Security["Security Layer"]
+        SEC1["Merkle audit trail\nTamper detection\nSlack alerting"]
     end
 
     DL[("Delta Lake\n/data/delta/")]:::storage
 
     CSV --> Bronze --> Silver --> Gold --> DL
+    Bronze -.-> Security
 
-    Airflow["Apache Airflow\nDAG orchestration"]:::orchestrator
-    Slack["Slack Webhook\nFailure alerts"]:::alert
+    Airflow["Apache Airflow\n4 DAGs"]:::orchestrator
+    Slack["Slack Webhook\nFailure + tamper alerts"]:::alert
 
     Airflow -.-> Bronze
     Airflow -.-> Silver
     Airflow -.-> Gold
+    Airflow -.-> Security
     Airflow -- on_failure_callback --> Slack
+    Security -- integrity_violation --> Slack
 
     classDef source fill:#f5a623,color:#000
     classDef storage fill:#4a90d9,color:#fff
@@ -109,7 +117,7 @@ Requires Java 17 (`brew install openjdk@17` on macOS).
 # One-time setup
 make install
 
-# Run all 30 tests (sets JAVA_HOME and PYSPARK_PYTHON automatically)
+# Run all 51 tests (sets JAVA_HOME and PYSPARK_PYTHON automatically)
 make test
 
 # Or run the full local pipeline without Docker
@@ -117,6 +125,113 @@ make run
 ```
 
 All environment variables (Java path, Spark Python, pipeline paths) are managed by the `Makefile` — no manual `export` needed.
+
+### 6 — Run the security demos
+
+```bash
+# Tamper-attack simulation: attacker edits a Parquet file, audit catches it
+python scripts/simulate_tamper.py
+
+# Isolation Forest anomaly detection with precision/recall on full dataset
+python -c "
+from src.utils.spark_session import get_spark, stop_spark
+from src.transformations.anomaly import run_anomaly_detection
+spark = get_spark()
+print(run_anomaly_detection(spark))
+stop_spark(spark)
+"
+```
+
+---
+
+## Security Architecture
+
+### Tamper-Evident Audit Trail (Merkle Tree)
+
+Most data pipelines trust that storage is immutable once written. This one doesn't.
+
+During Bronze ingestion, every row gets a SHA-256 hash over its content columns. Those hashes are assembled into a Merkle tree and the root is written to a separate `_audit/manifests` Delta table. A fourth Airflow DAG (`integrity_check`) runs daily and recomputes the Merkle root from the live Bronze data — any file-level modification (disk corruption, insider threat, compromised storage node) produces a root mismatch that triggers a Slack alert.
+
+**Why this catches attacks that Delta Lake misses**: Delta Lake's own integrity checks only validate the transaction log — they don't detect a raw Parquet file being edited on disk while the `_delta_log` is left untouched. The SHA-256 layer detects that.
+
+```
+src/security/audit.py
+├── add_row_hash()          — PySpark SHA-256 over all content columns
+├── compute_merkle_root()   — iterative pairwise hashing, sorted for determinism
+├── write_manifest()        — appends root + row count to _audit/manifests Delta table
+└── verify_bronze_integrity() — recomputes root, diffs against manifest, fires Slack on mismatch
+
+scripts/simulate_tamper.py  — full end-to-end attack simulation (see demo below)
+```
+
+### Isolation Forest Fraud Detection (Unsupervised)
+
+The Gold layer trains an Isolation Forest on the 28 PCA feature columns (V1–V28) plus Amount — it **never sees the Class label** during training. This mirrors a real production scenario where fraud labels arrive days after the transaction clears.
+
+After scoring, predictions are compared to ground-truth labels purely for evaluation. Results are written to the `gold/fraud_signals` Delta table and pushed to XCom for downstream visibility.
+
+```
+src/transformations/anomaly.py
+├── FEATURE_COLS = [V1..V28, Amount]   — 29 features, no label leakage
+├── _CONTAMINATION = 0.002             — slightly above true 0.172% fraud rate
+└── run_anomaly_detection()            — train → score → write fraud_signals → return metrics
+```
+
+---
+
+## Live Demo Output
+
+### Tamper-Attack Simulation
+
+Running `python scripts/simulate_tamper.py` against a live Bronze Delta table:
+
+```
+══════════════════════════════════════════════════════════════
+  TAMPER SIMULATION — Bronze Delta Table Attack
+══════════════════════════════════════════════════════════════
+
+[ATTACKER] Target file selected:
+           data/delta/bronze/transactions/ingest_date=2024-01-01/part-00000-...parquet
+
+[ATTACKER] Row 0 mutated:
+           Class:  0 → 1  (legit→fraud)
+           Amount: $    149.62 → $  99999.99
+           Delta transaction log: UNTOUCHED  ← attacker's blind spot
+
+[DEFENDER] Running integrity_check DAG task…
+
+══════════════════════════════════════════════════════════════
+  INTEGRITY CHECK RESULTS
+══════════════════════════════════════════════════════════════
+  Rows with hash mismatch : 1
+  Merkle root matches     : False
+  Stored root (ingest)    : a3f8c21d...
+  Computed root (now)     : 9b17e44a...
+  Pipeline clean          : False
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  *** INTEGRITY VIOLATION DETECTED ***
+  → 1 row(s) modified after ingestion
+  → Merkle root deviation confirms batch-level tampering
+  → Slack alert fired to #security-alerts
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+```
+
+The Delta transaction log is untouched — `spark.read.format("delta")` still reads the table without error. Only the SHA-256 audit layer catches the tamper.
+
+### Isolation Forest Results (284,807 transactions)
+
+```
+total_transactions    : 279,944
+flagged_as_anomaly    : 560
+actual_fraud          : 471
+fraud_caught          : 121
+precision             : 0.216
+recall                : 0.257
+F1                    : 0.235
+```
+
+Precision and recall are intentionally modest — the model is fully unsupervised with no label exposure during training, operating on PCA-obfuscated features. The point isn't state-of-the-art supervised accuracy; it's that anomaly scoring runs on raw transaction data and produces actionable signals without needing labelled training data.
 
 ---
 
@@ -162,19 +277,22 @@ Each task carries `sla=timedelta(minutes=15)`. If a task has not completed withi
 
 ---
 
-## Security Considerations
+## Security Controls
+
+### Tamper-Evident Storage (SHA-256 + Merkle Tree)
+Every Bronze row is hashed at ingest time; hashes roll up into a Merkle root stored in a separate audit table. A dedicated `integrity_check` DAG recomputes the root daily and fires a Slack alert on any deviation. See [Security Architecture](#security-architecture) above.
 
 ### Secrets Management
-All credentials (Slack webhook URL, database passwords) are loaded exclusively from environment variables (`.env` file) — never hardcoded. The `.env` file is listed in `.gitignore` and a `.env.example` template is committed instead.
+All credentials are loaded exclusively from environment variables (`.env` file) — never hardcoded. The `.env` file is listed in `.gitignore`; a `.env.example` template is committed instead. The CI pipeline runs a secret-pattern grep on every push.
 
-### No Hardcoded Credentials
-The codebase has no embedded passwords, API keys, or tokens. The CI pipeline validates this by running `ruff` checks and a secret-pattern grep.
-
-### Structured Logging for Auditability
-`src/utils/logging_config.py` configures JSON-structured logging across all pipeline stages. Each log record includes a timestamp, log level, module name, and pipeline stage — producing an audit trail compatible with SIEM ingestion (Splunk, Datadog, etc.).
+### Structured Logging for SIEM Compatibility
+`src/utils/logging_config.py` configures JSON-structured logging across all pipeline stages. Each record includes timestamp, log level, module name, and pipeline stage — compatible with Splunk, Datadog, and similar SIEM ingestion pipelines.
 
 ### Container Isolation
-Each service runs in its own Docker container with explicit port bindings. The Airflow webserver is the only service exposed externally; Postgres and Redis communicate only on the internal Docker network.
+Each service runs in its own Docker container with explicit port bindings. The Airflow webserver is the only service exposed externally; Postgres communicates only on the internal Docker network.
 
 ### Principle of Least Privilege
-Airflow connections and variables reference secrets by name; the DAG code never reads raw credential values directly.
+Airflow connections and variables reference secrets by name; DAG code never reads raw credential values directly.
+
+### Idempotent Writes (no silent data duplication)
+All Silver and Gold writes use Delta Lake `MERGE INTO` — re-triggering a DAG for the same date range updates existing rows rather than appending duplicates. Combined with the audit trail, every row's lineage is traceable from CSV to Gold.

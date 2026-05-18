@@ -1,4 +1,4 @@
-"""DAG: gold_aggregate — Silver → Gold Delta tables (daily & hourly summaries)."""
+"""DAG: gold_aggregate — Silver → Gold Delta tables (summaries + fraud signals)."""
 
 from datetime import datetime, timedelta
 
@@ -73,4 +73,24 @@ Both tables use Delta MERGE so re-runs are idempotent.
         doc_md="Build daily and hourly Gold aggregations with broadcast joins and Delta MERGE.",
     )
 
-    wait_for_silver >> aggregate_task
+    def _run_anomaly(**context):
+        from src.transformations.anomaly import run_anomaly_detection
+        from src.utils.spark_session import get_spark
+
+        spark = get_spark(app_name="AnomalyDetection")
+        try:
+            metrics = run_anomaly_detection(spark)
+            context["ti"].xcom_push(key="anomaly_metrics", value=metrics)
+        finally:
+            spark.stop()
+
+    anomaly_task = PythonOperator(
+        task_id="fraud_anomaly_detection",
+        python_callable=_run_anomaly,
+        doc_md=(
+            "Train Isolation Forest on V1-V28 + Amount (unsupervised). "
+            "Write fraud_signals Gold table. Push precision/recall/F1 to XCom."
+        ),
+    )
+
+    wait_for_silver >> aggregate_task >> anomaly_task
