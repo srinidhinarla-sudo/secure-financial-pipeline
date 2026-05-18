@@ -10,7 +10,7 @@ export PIPELINE_DATA_DIR := $(shell pwd)/data
 export PIPELINE_DELTA_DIR:= $(shell pwd)/data/delta
 export SLACK_WEBHOOK_URL :=
 
-.PHONY: install test run lint docker-up docker-down clean
+.PHONY: install test run demo lint docker-up docker-down clean
 
 install:
 	python3.11 -m venv .venv
@@ -27,6 +27,10 @@ lint:
 run:
 	mkdir -p data/delta
 	$(PYTHON) scripts/run_pipeline.py
+
+demo: run
+	$(PYTHON) scripts/simulate_tamper.py
+	$(PYTHON) scripts/run_anomaly_demo.py
 
 docker-up:
 	docker compose up -d

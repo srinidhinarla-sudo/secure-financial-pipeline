@@ -1,5 +1,7 @@
 # Secure Financial Data Pipeline
 
+**Srinidhi Narla**
+
 An Apache Airflow-orchestrated ETL pipeline that ingests 284K+ credit card transactions through a Bronze/Silver/Gold medallion architecture on Delta Lake. Built with an adversarial security mindset: a tamper-evident audit trail detects file-level attacks that bypass Delta Lake's own transaction log, and an unsupervised Isolation Forest flags anomalous transactions without ever seeing ground-truth fraud labels during training.
 
 ## Architecture
@@ -128,18 +130,15 @@ All environment variables (Java path, Spark Python, pipeline paths) are managed 
 
 ### 6 — Run the security demos
 
-```bash
-# Tamper-attack simulation: attacker edits a Parquet file, audit catches it
-python scripts/simulate_tamper.py
+Both demos require the pipeline to have been run first (step 5 `make run` or step 4 via Docker).
 
-# Isolation Forest anomaly detection with precision/recall on full dataset
-python -c "
-from src.utils.spark_session import get_spark, stop_spark
-from src.transformations.anomaly import run_anomaly_detection
-spark = get_spark()
-print(run_anomaly_detection(spark))
-stop_spark(spark)
-"
+```bash
+# Runs the full pipeline then both security demos back-to-back
+make demo
+
+# Or individually:
+python scripts/simulate_tamper.py   # tamper-attack simulation
+python scripts/run_anomaly_demo.py  # Isolation Forest fraud detection
 ```
 
 ---
